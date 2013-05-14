@@ -254,63 +254,83 @@ static int read_stats (char *url, char *type)
   return (0);
 } /* int read_stats */
 
-static int riak_rpc (void)
+int riak_rpc (char *node, char *cookie, char *mod, char *fun, char *arg, int index, char *match_string)
 {
+  int arity, fd, type, size, i;
+  int match = -1;
+  char atom[MAXATOMLEN];
   ei_cnode ec;
 
-  int arity, fd;
-
-  char claimant[MAXATOMLEN];
-  char ringready[MAXATOMLEN];
-  char down[MAXATOMLEN];
-  char markeddown[MAXATOMLEN];
-  char transferstatus[MAXATOMLEN];
-
-  if (ei_connect_init(&ec, "collectd", "riak", 2) == -1)
+  if (ei_connect_init(&ec, "collectd", cookie, 2) < 0)
   {
-    ERROR ("riak_plugin: failed on ei_connect_init");
-    return (-1);
+    ERROR ("riak plugin: failed to initiate Erlang connection");
+    return -1;
   }
 
-  if ((fd = ei_connect(&ec, "riak@127.0.0.1")) < 0)
+  if ((fd = ei_connect(&ec, node)) < 0)
   {
-    DEBUG ("riak_plugin: failed to connect to Riak node");
-    return (-1);
+    ERROR ("riak plugin: failed to connect to Riak node");
+    return -1;
   }
 
   ei_x_buff args, reply;
   ei_x_new(&args);
   ei_x_new(&reply);
+
+  if (arg[0] != 0)
+  {
+    ei_x_encode_list_header(&args, 1);
+    ei_x_encode_atom(&args, arg);
+  }
+
   ei_x_encode_empty_list(&args);
 
-  if (ei_rpc(&ec, fd, "riak_core_status", "ring_status", args.buff, args.index, &reply) < 0)
+  if (ei_rpc(&ec, fd, mod, fun, args.buff, args.index, &reply) < 0)
   {
-    ERROR ("riak_plugin: Erlang RPC call to Riak node failed");
-    ei_x_free(&args);
-    ei_x_free(&reply);
-    close(fd);
-    return (-1);
+    ERROR ("riak plugin: Erlang RPC call failed to %s", node);
+    return -1;
   }
 
   reply.index = 0;
 
-  ei_decode_tuple_header(reply.buff, &reply.index, &arity);
-  ei_decode_atom(reply.buff, &reply.index, claimant);
-  ei_decode_atom(reply.buff, &reply.index, ringready);
-  ei_decode_atom(reply.buff, &reply.index, down);
-  ei_decode_atom(reply.buff, &reply.index, markeddown);
-  ei_decode_atom(reply.buff, &reply.index, transferstatus);
+  ei_get_type(reply.buff, &reply.index, &type, &size);
 
-  DEBUG("riak_plugin: claimant: %s\n", claimant);
-  DEBUG("riak_plugin: ringready: %s\n", ringready);
-  DEBUG("riak_plugin: down: %s\n", down);
-  DEBUG("riak_plugin: markeddown: %s\n", markeddown);
-  DEBUG("riak_plugin: transferstatus: %s\n", transferstatus);
+  if (type == ERL_LIST_EXT || type == ERL_NIL_EXT)
+  {
+    ei_decode_list_header(reply.buff, &reply.index, &arity);
+  }
+  else
+  {
+    ei_decode_tuple_header(reply.buff, &reply.index, &arity);
+  }
 
+  if (index == 0)
+  {
+    index = arity;
+  }
+
+  for (i = 0; i < index; i++)
+  {
+    atom[0] = 0;
+    match = -1;
+    ei_decode_atom(reply.buff, &reply.index, atom);
+
+    if (strcmp(atom, match_string) == 0)
+    {
+      match = 1;
+      if (index == 0)
+      {
+        break;
+      }
+    }
+  }
+
+  submit ("riak_rpc", fun, match);
+
+  close(fd);
   ei_x_free(&args);
   ei_x_free(&reply);
-  close(fd);
-  
+
   return (0);
 } /* int riak_rpc */
 
@@ -318,7 +338,14 @@ static int riak_read (void)
 {
   read_stats(stats_url, "riak_stats");
   read_stats(repl_url, "riak_repl");
-  riak_rpc();
+
+  char *node = "riak@127.0.0.1";
+  char *cookie = "riak";
+
+  riak_rpc(node, cookie, "riak_core_status", "ring_status", "",  3, "");
+  riak_rpc(node, cookie, "riak_core_status", "ringready", "", 1, "ok");
+  riak_rpc(node, cookie, "riak_core_node_watcher", "services", "", 1, "riak_kv");
+  riak_rpc(node, cookie, "net_adm", "ping", node, 1, "pong");
 
   return (0);
 }
