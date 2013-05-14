@@ -986,6 +986,20 @@ collectd_LDADD += "-dlopen" protocols.la
 collectd_DEPENDENCIES += protocols.la
 endif
 
+if BUILD_PLUGIN_RIAK
+pkglib_LTLIBRARIES += riak.la
+riak_la_SOURCES = riak.c
+riak_la_CFLAGS = $(AM_CFLAGS)
+riak_la_LIBADD = -lei
+riak_la_LDFLAGS = -module -avoid-version
+if BUILD_WITH_LIBCURL
+riak_la_CFLAGS += $(BUILD_WITH_LIBCURL_CFLAGS)
+riak_la_LIBADD += $(BUILD_WITH_LIBCURL_LIBS)
+endif
+collectd_LDADD += "-dlopen" riak.la
+collectd_DEPENDENCIES += riak.la
+endif
+
 if BUILD_PLUGIN_REDIS
 pkglib_LTLIBRARIES += redis.la
 redis_la_SOURCES = redis.c
