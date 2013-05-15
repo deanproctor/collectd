@@ -32,6 +32,8 @@
 static char *stats_url   = NULL;
 static char *repl_url    = NULL;
 static char *check_repl  = NULL;
+static char *riak_node   = NULL;
+static char *riak_cookie = NULL;
 
 static CURL *curl = NULL;
 
@@ -43,11 +45,13 @@ static const char *config_keys[] =
 {
   "StatsURL",
   "ReplURL",
-  "CheckRepl"
+  "CheckRepl",
+  "RiakNode",
+  "RiakCookie"
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
-static const char *stats_metrics[] = {"node_gets", "node_gets_total", "node_puts", "node_puts_total",
+static const char *riak_metrics[] = {"node_gets", "node_gets_total", "node_puts", "node_puts_total",
     "vnode_gets", "vnode_gets_total", "vnode_puts", "vnode_puts_total", "read_repairs", 
     "read_repairs_total", "coord_redirs_total", "node_get_fsm_time_mean", "node_get_fsm_time_median",
     "node_get_fsm_time_95", "node_get_fsm_time_100", "node_put_fsm_time_mean",
@@ -57,13 +61,8 @@ static const char *stats_metrics[] = {"node_gets", "node_gets_total", "node_puts
     "node_get_fsm_siblings_95", "node_get_fsm_siblings_100", "memory_processes_used",
     "sys_process_count", "pbc_connects", "pbc_active"}; 
 
-static int stats_metrics_num = STATIC_ARRAY_SIZE (stats_metrics);
-
-
 static const char *repl_metrics[] = {"queue_length", "queue_byte_size", "queue_percentage", 
     "dropped_count", "local_leader_message_queue_len", "local_leader_heap_size"};
-
-static int repl_metrics_num = STATIC_ARRAY_SIZE (repl_metrics);
 
 static size_t riak_curl_callback (void *buf, size_t size, size_t nmemb,
     void __attribute__((unused)) *stream)
@@ -109,6 +108,10 @@ static int config (const char *key, const char *value)
     return (config_set_string (&repl_url, value));
   else if (strcasecmp (key, "checkrepl") == 0)
     return (config_set_string (&check_repl, value));
+  else if (strcasecmp (key, "riaknode") == 0)
+    return (config_set_string (&riak_node, value));
+  else if (strcasecmp (key, "riakcookie") == 0)
+    return (config_set_string (&riak_cookie, value));
   else
     return (-1);
 } /* int config */
@@ -165,7 +168,7 @@ static void submit (char *type, char *inst, long long value)
   plugin_dispatch_values (&vl);
 } /* void submit */
 
-static int read_stats (char *url, char *type)
+static int read_stats (char *url, const char *metrics[], int metrics_num)
 {
   int i, j;
 
@@ -177,29 +180,9 @@ static int read_stats (char *url, char *type)
   char *fields[2];
   int   fields_num;
 
-  int  *metrics_num;
-  const char **metrics = NULL;
-
-  if (strcmp(type, "riak_stats") == 0)
-  {
-    metrics = stats_metrics;
-    metrics_num = &stats_metrics_num;
-  } 
-  else if (strcmp(type, "riak_repl") == 0)
-  {
-    metrics = repl_metrics;
-    metrics_num = &repl_metrics_num;
-  }
-  else
-  {
-    return (-1);
-  }
-
   init_curl(url);
 
-  if (curl == NULL)
-    return (-1);
-  if (url == NULL)
+  if (curl == NULL || url == NULL)
     return (-1);
 
   riak_buffer_len = 0;
@@ -233,16 +216,16 @@ static int read_stats (char *url, char *type)
     {
       /* Remove quotes and colon from metric name */
       fields[0]++;
-      fields[0][strlen(fields[0])-2] = 0;
+      fields[0][strlen (fields[0])-2] = 0;
 
       /* Remove trailing comma from metric value */
-      fields[1][strlen(fields[1])-1] = 0;
+      fields[1][strlen (fields[1])-1] = 0;
   
-      for (j = 0; j < *metrics_num; j++) 
+      for (j = 0; j < metrics_num; j++) 
       {
-        if (strcmp(fields[0], metrics[j]) == 0)
+        if (strcmp (fields[0], metrics[j]) == 0)
         {
-          submit (type, fields[0], atoll(fields[1]));
+          submit ("riak_stats", fields[0], atoll(fields[1]));
           break;
         }
       }
@@ -254,56 +237,63 @@ static int read_stats (char *url, char *type)
   return (0);
 } /* int read_stats */
 
-int riak_rpc (char *node, char *cookie, char *mod, char *fun, char *arg, int index, char *match_string)
+static int riak_rpc_match (char *mod, char *fun, char *arg, int index, char *match_string)
 {
   int arity, fd, type, size, i;
   int match = -1;
   char atom[MAXATOMLEN];
   ei_cnode ec;
 
-  if (ei_connect_init(&ec, "collectd", cookie, 2) < 0)
+  if (ei_connect_init (&ec, "collectd", riak_cookie, 2) < 0)
   {
     ERROR ("riak plugin: failed to initiate Erlang connection");
     return -1;
   }
 
-  if ((fd = ei_connect(&ec, node)) < 0)
+  if ((fd = ei_connect (&ec, riak_node)) < 0)
   {
     ERROR ("riak plugin: failed to connect to Riak node");
     return -1;
   }
 
   ei_x_buff args, reply;
-  ei_x_new(&args);
-  ei_x_new(&reply);
+  ei_x_new (&args);
+  ei_x_new (&reply);
 
   if (arg[0] != 0)
   {
-    ei_x_encode_list_header(&args, 1);
-    ei_x_encode_atom(&args, arg);
+    ei_x_encode_list_header (&args, 1);
+    ei_x_encode_atom (&args, arg);
   }
 
-  ei_x_encode_empty_list(&args);
+  ei_x_encode_empty_list (&args);
 
-  if (ei_rpc(&ec, fd, mod, fun, args.buff, args.index, &reply) < 0)
+  if (ei_rpc (&ec, fd, mod, fun, args.buff, args.index, &reply) < 0)
   {
-    ERROR ("riak plugin: Erlang RPC call failed to %s", node);
+    ERROR ("riak plugin: Erlang RPC call failed to %s", riak_node);
     return -1;
   }
 
   reply.index = 0;
 
-  ei_get_type(reply.buff, &reply.index, &type, &size);
+  ei_get_type (reply.buff, &reply.index, &type, &size);
 
   if (type == ERL_LIST_EXT || type == ERL_NIL_EXT)
   {
-    ei_decode_list_header(reply.buff, &reply.index, &arity);
+    ei_decode_list_header (reply.buff, &reply.index, &arity);
   }
   else
   {
-    ei_decode_tuple_header(reply.buff, &reply.index, &arity);
+    ei_decode_tuple_header (reply.buff, &reply.index, &arity);
   }
 
+  if (index > arity)
+  {
+    ERROR ("riak plugin: Unexpected response from Erlang RPC call.");
+    return -1;
+  }
+
+  /* 0 index indicates we should test all elements */
   if (index == 0)
   {
     index = arity;
@@ -312,40 +302,38 @@ int riak_rpc (char *node, char *cookie, char *mod, char *fun, char *arg, int ind
   for (i = 0; i < index; i++)
   {
     atom[0] = 0;
-    match = -1;
-    ei_decode_atom(reply.buff, &reply.index, atom);
+    match = 0;
 
-    if (strcmp(atom, match_string) == 0)
+    ei_decode_atom (reply.buff, &reply.index, atom);
+
+    if (strcmp (atom, match_string) == 0)
     {
       match = 1;
-      if (index == 0)
+      if (index == arity)
       {
         break;
       }
     }
   }
 
-  submit ("riak_rpc", fun, match);
+  submit ("riak_service", fun, match);
 
-  close(fd);
-  ei_x_free(&args);
-  ei_x_free(&reply);
+  close (fd);
+  ei_x_free (&args);
+  ei_x_free (&reply);
 
   return (0);
-} /* int riak_rpc */
+} /* int riak_rpc_match */
 
 static int riak_read (void)
 {
-  read_stats(stats_url, "riak_stats");
-  read_stats(repl_url, "riak_repl");
+  read_stats(stats_url, riak_metrics, STATIC_ARRAY_SIZE (riak_metrics));
+  read_stats(repl_url, repl_metrics, STATIC_ARRAY_SIZE (repl_metrics));
 
-  char *node = "riak@127.0.0.1";
-  char *cookie = "riak";
-
-  riak_rpc(node, cookie, "riak_core_status", "ring_status", "",  3, "");
-  riak_rpc(node, cookie, "riak_core_status", "ringready", "", 1, "ok");
-  riak_rpc(node, cookie, "riak_core_node_watcher", "services", "", 1, "riak_kv");
-  riak_rpc(node, cookie, "net_adm", "ping", node, 1, "pong");
+  riak_rpc_match("riak_core_status", "ring_status", "",  3, "");
+  riak_rpc_match("riak_core_status", "ringready", "", 1, "ok");
+  riak_rpc_match("riak_core_node_watcher", "services", "", 0, "riak_kv");
+  riak_rpc_match("net_adm", "ping", riak_node, 1, "pong");
 
   return (0);
 }

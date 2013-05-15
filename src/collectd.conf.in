@@ -843,6 +843,8 @@
 #	StatsURL "http://localhost:8098/stats"
 #	ReplURL "http://localhost:8098/riak-repl/stats"
 #       CheckRepl true
+#       RiakNode "riak@127.0.0.1"
+#       RiakCookie "riak"
 #</Plugin>
 
 #<Plugin routeros>
