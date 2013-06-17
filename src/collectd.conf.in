@@ -137,6 +137,7 @@
 #@BUILD_PLUGIN_PYTHON_TRUE@  Globals true
 #@BUILD_PLUGIN_PYTHON_TRUE@</LoadPlugin>
 #@BUILD_PLUGIN_REDIS_TRUE@LoadPlugin redis
+#@BUILD_PLUGIN_RIAK_TRUE@LoadPlugin riak
 #@BUILD_PLUGIN_ROUTEROS_TRUE@LoadPlugin routeros
 #@BUILD_PLUGIN_RRDCACHED_TRUE@LoadPlugin rrdcached
 @LOAD_PLUGIN_RRDTOOL@LoadPlugin rrdtool
@@ -836,6 +837,14 @@
 #      Port "6379"
 #      Timeout 2000
 #   </Node>
+#</Plugin>
+
+#<Plugin riak>
+#	StatsURL "http://localhost:8098/stats"
+#	ReplURL "http://localhost:8098/riak-repl/stats"
+#       CheckRepl true
+#       RiakNode "riak@127.0.0.1"
+#       RiakCookie "riak"
 #</Plugin>
 
 #<Plugin routeros>
