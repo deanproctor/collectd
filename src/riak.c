@@ -31,9 +31,9 @@
 
 static char *stats_url   = NULL;
 static char *repl_url    = NULL;
-static char *check_repl  = NULL;
 static char *riak_node   = NULL;
 static char *riak_cookie = NULL;
+static int   check_repl  = 0;
 
 static CURL *curl = NULL;
 
@@ -100,6 +100,16 @@ static int config_set_string (char **var, const char *value)
     return (0);
 } /* int config_set_string */
 
+static int config_set_boolean ( int *var, const char *value)
+{
+  if (IS_TRUE (value))
+    *var = 1;
+  else
+    *var = 0;
+
+  return (0);
+} /* int config_set_boolean */
+
 static int config (const char *key, const char *value)
 {
   if (strcasecmp (key, "statsurl") == 0)
@@ -107,7 +117,7 @@ static int config (const char *key, const char *value)
   else if (strcasecmp (key, "replurl") == 0)
     return (config_set_string (&repl_url, value));
   else if (strcasecmp (key, "checkrepl") == 0)
-    return (config_set_string (&check_repl, value));
+    return (config_set_boolean (&check_repl, value));
   else if (strcasecmp (key, "riaknode") == 0)
     return (config_set_string (&riak_node, value));
   else if (strcasecmp (key, "riakcookie") == 0)
@@ -328,7 +338,11 @@ static int riak_rpc_match (char *mod, char *fun, char *arg, int index, char *mat
 static int riak_read (void)
 {
   read_stats(stats_url, riak_metrics, STATIC_ARRAY_SIZE (riak_metrics));
-  read_stats(repl_url, repl_metrics, STATIC_ARRAY_SIZE (repl_metrics));
+
+  if (check_repl == 1)
+  {
+    read_stats(repl_url, repl_metrics, STATIC_ARRAY_SIZE (repl_metrics));
+  }
 
   riak_rpc_match("riak_core_status", "ring_status", "",  3, "");
   riak_rpc_match("riak_core_status", "ringready", "", 1, "ok");
